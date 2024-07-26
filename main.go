@@ -9,14 +9,18 @@ import (
 )
 
 type todo struct {
-	ID    int    `json:"id"`
-	Title string `json:"title"`
-	Done  bool   `json:"done"`
+	Id        int    `json:"id"`
+	Title     string `json:"title"`
+	Completed bool   `json:"completed"`
 }
 
 type todoList []todo
 
 func main() {
+
+	initDB()
+	defer db.Close()
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,60 +13,69 @@ import (
 var todoListItems todoList
 
 func SetupRoutes(r *chi.Mux) {
-	r.Get("/", homeHandler)
 	r.Post("/add", addTodoHandler)
 	r.Delete("/delete/{id}", deleteTodoHandler)
 	r.Put("/update/{id}", updateTodoHandler)
 	r.Get("/todos", getTodosHandler)
 }
 
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte("welcome to my todo app"))
-}
-
 func addTodoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("POST request received")
-	err := r.ParseMultipartForm(10 << 20)
-	if err != nil {
-		http.Error(w, "Failed to parse form", http.StatusBadRequest)
-		return
-	}
 	var newTodo todo
-	newTodo.Title = r.FormValue("title")
-	if newTodo.Title == "" {
-		http.Error(w, "Title is required", http.StatusBadRequest)
+	err := json.NewDecoder(r.Body).Decode(&newTodo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fmt.Println("Title:", newTodo.Title)
-	newTodo.Done, _ = strconv.ParseBool(r.FormValue("done"))
-	fmt.Println("Done:", newTodo.Done)
-	newTodo.ID = len(todoListItems) + 1
 
-	fmt.Printf("New todo: %+v\n", newTodo)
+	//insert into db
+	result, err := db.Exec("INSERT INTO todos(title, completed) VALUES (?, ?)", newTodo.Title, newTodo.Completed)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	todoListItems = append(todoListItems, newTodo)
+	id, _ := result.LastInsertId()
+	newTodo.Id = int(id)
+
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(newTodo)
-
 }
 
 func deleteTodoHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
 	id := chi.URLParam(r, "id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
 		http.Error(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
-	for i, v := range todoListItems {
-		if v.ID == idInt {
-			todoListItems = append(todoListItems[:i], todoListItems[i+1:]...)
-		}
+	_, err = db.Exec("DELETE FROM todos WHERE id = ?", idInt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Todo deleted"))
 }
 
 func getTodosHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write([]byte(fmt.Sprintf("%+v", todoListItems)))
+	rows, err := db.Query("SELECT * FROM todos")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var todos []todo
+	for rows.Next() {
+		var t todo
+		rows.Scan(&t.Id, &t.Title, &t.Completed)
+		todos = append(todos, t)
+	}
+	json.NewEncoder(w).Encode(todos)
 }
 
 func updateTodoHandler(w http.ResponseWriter, r *http.Request) {
@@ -75,12 +85,29 @@ func updateTodoHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
-	for i, v := range todoListItems {
-		if v.ID == idInt {
-			todoListItems[i].Done = !todoListItems[i].Done
-			return
+
+	// Fetch the current todo item
+	var todo todo
+	err = db.QueryRow("SELECT completed FROM todos WHERE id = ?", idInt).Scan(&todo.Completed)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Todo not found", http.StatusNotFound)
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
+		return
+	}
+
+	// Toggle the completed status
+	newStatus := !todo.Completed
+
+	// Update the todo in the database
+	_, err = db.Exec("UPDATE todos SET completed = ? WHERE id = ?", newStatus, idInt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Todo updated"))
 }
