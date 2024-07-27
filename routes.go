@@ -10,8 +10,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-var todoListItems todoList
-
 func SetupRoutes(r *chi.Mux) {
 	r.Post("/add", addTodoHandler)
 	r.Delete("/delete/{id}", deleteTodoHandler)
